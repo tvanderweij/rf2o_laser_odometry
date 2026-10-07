@@ -17,6 +17,9 @@
 
 #include "rf2o_laser_odometry/CLaserOdometry2DNode.hpp"
 
+#include <algorithm>
+#include <cstddef>
+
 using namespace rf2o;
 
 CLaserOdometry2DNode::CLaserOdometry2DNode(): Node("CLaserOdometry2DNode")
@@ -98,9 +101,27 @@ void CLaserOdometry2DNode::LaserCallBack(const sensor_msgs::msg::LaserScan::Shar
     
     if (rf2o_ref.first_laser_scan == false)
     {
-      // copy laser range data to rf2o internal variable
-      for (unsigned int i = 0; i < rf2o_ref.width; i++)
+      // Copy laser range data to rf2o internal variable.
+      //
+      // rf2o_ref.width is fixed by init() from the FIRST scan, and every
+      // internal buffer (range_wf and the whole image pyramid) is sized from
+      // it. A scanning lidar may legitimately vary its point count between
+      // scans - the STL27L this was found on publishes 2150-2175 - so a later
+      // scan can be shorter than the first, and the previous unconditional
+      // loop then read past the end of new_scan->ranges. Whether it tripped at
+      // all depended on the first scan happening to be the shortest, which is
+      // why this looked intermittent.
+      //
+      // Clamp to what actually arrived, and pad the rest with 0.f: that is
+      // already rf2o's "no return" sentinel, tested as
+      // `std::isfinite(dcenter) && dcenter > 0.f` in
+      // CLaserOdometry2D::createImagePyramid().
+      const std::size_t n =
+          std::min<std::size_t>(rf2o_ref.width, new_scan->ranges.size());
+      for (std::size_t i = 0; i < n; i++)
         rf2o_ref.range_wf(i) = new_scan->ranges[i];
+      for (std::size_t i = n; i < rf2o_ref.width; i++)
+        rf2o_ref.range_wf(i) = 0.f;
       // inform of new scan available
       new_scan_available = true;
     }
